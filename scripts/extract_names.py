@@ -226,6 +226,7 @@ def build_output_expressions(extractor: DeclarationExtractor, steps):
 
     for t in range(steps):
         state = extractor.step(order, state, t)
+    return state
 
 def extract_declaration_names(systemverilog_code: str) -> list[str]:
     """
@@ -267,9 +268,7 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
     # Visit all nodes in the compilation root
     compilation.getRoot().visit(extractor)
 
-    build_output_expressions(extractor, 15)
-
-    return (
+    info = (
         [f"input: {p}" for p in extractor.inputs]
         + [f"outputs: {p}" for p in extractor.outputs]
         + [
@@ -277,6 +276,20 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
             for i in extractor.drivers.values()
         ]
     )
+
+    state = build_output_expressions(extractor, 10)
+
+    s = z3.Solver()
+    s.add(z3.And(state["S"] == z3.BoolVal(True)))
+
+    print("Check satisfiability... ", end="")
+    if s.check() == z3.sat:
+        print("passed!")
+    else:
+        print("UNSAT")
+    print()
+
+    return info
 
 
 def extract_declarations_from_file(filepath: str) -> list[str]:
