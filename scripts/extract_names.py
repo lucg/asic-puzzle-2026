@@ -4,62 +4,56 @@
 # modified from:
 # https://github.com/MikePopoloski/slang/blob/292805396d9c9952a457f9d14ff900c8f6a3d3f2/pyslang/examples/extract_logic_names.py
 
-"""Extract the names of all logic declarations from SystemVerilog code.
+"""Extract the names of all declarations from SystemVerilog code.
 
 This example demonstrates how to use the pyslang visitor system to traverse
-the AST and extract the names of all variables declared with the 'logic' type.
-It shows a practical application of AST traversal for code analysis.
+the AST and extract the names of all variables .
 
 Example usage:
-    python extract_logic_names.py
+    python extract_names.py
 
 The script will parse a sample SystemVerilog module and print the names of
-all logic declarations found in the code.
+all relevant declarations found in the code.
 """
 
-from pyslang.ast import Compilation, PackedArrayType, ScalarType, VariableSymbol
+from pyslang import DiagnosticEngine, TextDiagnosticClient
+from pyslang.ast import (
+    AssertionExpr,
+    AssertionExprKind,
+    Compilation,
+    Expression,
+    ExpressionKind,
+    Symbol,
+    SymbolKind,
+    UninstantiatedDefSymbol,
+)
 from pyslang.parsing import Token
 from pyslang.syntax import SyntaxNode, SyntaxTree
 
-from pyslang import DiagnosticEngine, TextDiagnosticClient
 
-
-class LogicDeclarationExtractor:
+class DeclarationExtractor:
     """
-    Visitor class to extract names of all logic declarations.
+    Visitor class to extract names of declarations.
 
-    This visitor traverses the AST and collects the names of all variables
-    that are declared with the 'logic' type. It demonstrates how to:
     1. Filter for specific symbol types (VariableSymbol)
-    2. Check the type of variables (ScalarType with Logic kind)
+    2. Check the type of variables
     3. Extract and collect symbol names
     """
 
     def __init__(self):
-        """Initialize the extractor with an empty list of logic variable names."""
-        self.logic_names = []
+        self.names = []
 
-    def _is_logic_type(self, var_type) -> bool:
-        """
-        Check if a type represents a logic type, including nested arrays.
-
-        Args:
-            var_type: The type to check (ScalarType or PackedArrayType)
-
-        Returns:
-            True if the type is logic or an array of logic types
-        """
-        # Check if it's a scalar logic type
-        if isinstance(var_type, ScalarType):
-            return var_type.scalarKind == ScalarType.Kind.Logic
-
-        # Check if it's a packed array type
-        elif isinstance(var_type, PackedArrayType):
-            # Recursively check the element type
-            return self._is_logic_type(var_type.elementType)
-
-        # Not a logic type
-        return False
+    @staticmethod
+    def _unpack_port_connection(connection):
+        match connection:
+            case AssertionExpr(
+                kind=AssertionExprKind.Simple,
+                expr=Expression(
+                    kind=ExpressionKind.NamedValue,
+                    symbol=Symbol(kind=SymbolKind.Net, name=symbol_name),
+                ),
+            ):
+                return symbol_name
 
     def __call__(self, obj: Token | SyntaxNode) -> None:
         """
@@ -70,18 +64,22 @@ class LogicDeclarationExtractor:
                  We're specifically interested in VariableSymbol nodes.
         """
         # Check if this is a variable symbol (includes logic declarations)
-        if isinstance(obj, VariableSymbol):
-            # Get the type of the variable
-            var_type = obj.type
+        match obj:
+            case Symbol(kind=SymbolKind.UninstantiatedDef):
+                obj: UninstantiatedDefSymbol
+                unpacked_connections = (
+                    x
+                    for conn in obj.portConnections
+                    if (x := self._unpack_port_connection(conn)) is not None
+                )
+                ports = list(zip(obj.portNames, unpacked_connections))
+                if ports:
+                    self.names.append(f"{obj.name} {ports}")
 
-            # Check if this is a logic type (handles scalars, arrays, and multi-dimensional arrays)
-            if self._is_logic_type(var_type):
-                self.logic_names.append(obj.name)
 
-
-def extract_logic_declaration_names(systemverilog_code: str) -> list[str]:
+def extract_declaration_names(systemverilog_code: str) -> list[str]:
     """
-    Extract logic declaration names from SystemVerilog code.
+    Extract declaration names from SystemVerilog code.
 
     Args:
         systemverilog_code: A string containing SystemVerilog source code.
@@ -114,36 +112,36 @@ def extract_logic_declaration_names(systemverilog_code: str) -> list[str]:
     #     raise RuntimeError("Compilation had errors")
 
     # Create our visitor to extract logic declaration names
-    extractor = LogicDeclarationExtractor()
+    extractor = DeclarationExtractor()
 
     # Visit all nodes in the compilation root
     compilation.getRoot().visit(extractor)
 
-    return extractor.logic_names
+    return extractor.names
 
 
-def extract_logic_declarations_from_file(filepath: str) -> list[str]:
+def extract_declarations_from_file(filepath: str) -> list[str]:
     """
-    Extract logic declaration names from a SystemVerilog file.
+    Extract declaration names from a SystemVerilog file.
 
     Args:
         filepath: Path to a SystemVerilog file.
 
     Returns:
-        A list of strings containing the names of all logic declarations.
+        A list of strings containing the names of all declarations.
     """
     with open(filepath, "r", encoding="utf-8") as file:
         content = file.read()
-    return extract_logic_declaration_names(content)
+    return extract_declaration_names(content)
 
 
 def main():
-    """Main function demonstrating the logic declaration extractor."""
+    """Main function demonstrating the declaration extractor."""
 
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Extract logic declaration names from SystemVerilog code"
+        description="Extract declaration names from SystemVerilog code"
     )
     parser.add_argument(
         "files",
@@ -159,7 +157,7 @@ def main():
 
     args = parser.parse_args()
 
-    print("SystemVerilog Logic Declaration Extractor")
+    print("SystemVerilog Declaration Extractor")
     print("=" * 50)
     print()
 
@@ -168,14 +166,14 @@ def main():
         for filepath in args.files:
             print(f"Processing file: {filepath}")
             try:
-                logic_names = extract_logic_declarations_from_file(filepath)
+                names = extract_declarations_from_file(filepath)
 
-                if logic_names:
-                    print(f"Found {len(logic_names)} logic declarations:")
-                    for i, name in enumerate(logic_names, 1):
+                if names:
+                    print(f"Found {len(names)} declarations:")
+                    for i, name in enumerate(names, 1):
                         print(f"  {i:2d}. {name}")
                 else:
-                    print("No logic declarations found.")
+                    print("No declarations found.")
 
             except Exception as e:  # noqa: BLE001 - example keeps going on any per-file error
                 print(f"Error: {e}")
@@ -236,25 +234,25 @@ def main():
             print()
 
         try:
-            # Extract logic declaration names
-            logic_names = extract_logic_declaration_names(sample_code)
+            # Extract declaration names
+            names = extract_declaration_names(sample_code)
 
             # Display results
-            if logic_names:
-                print(f"Found {len(logic_names)} logic declarations:")
+            if names:
+                print(f"Found {len(names)} declarations:")
                 print()
-                for i, name in enumerate(logic_names, 1):
+                for i, name in enumerate(names, 1):
                     print(f"  {i:2d}. {name}")
             else:
-                print("No logic declarations found.")
+                print("No declarations found.")
 
             print()
             print("Note: This extractor only finds variables declared with the")
             print("'logic' keyword. It excludes 'bit', 'reg', nets (wire), and")
             print("other data types, even if they are functionally similar.")
             print()
-            print("Usage: python extract_logic_names.py [file1.sv file2.sv ...]")
-            print("       python extract_logic_names.py --verbose  # Show sample code")
+            print("Usage: python extract_names.py [file1.sv file2.sv ...]")
+            print("       python extract_names.py --verbose  # Show sample code")
 
         except Exception as e:  # noqa: BLE001 - top-level guard reports any failure
             print(f"Error processing SystemVerilog code: {e}")
