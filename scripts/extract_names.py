@@ -50,6 +50,18 @@ class DeclarationExtractor:
             ):
                 return symbol_name
 
+    @classmethod
+    def _unpack_ports(cls, symbol: UninstantiatedDefSymbol):
+        unpacked_connections = (
+            x
+            for conn in symbol.portConnections
+            if (x := cls._unpack_port_connection(conn)) is not None
+        )
+        return {
+            name: connection
+            for name, connection in zip(symbol.portNames, unpacked_connections)
+        }
+
     def __call__(self, obj: Token | SyntaxNode) -> None:
         """
         Visit method called for each node in the AST.
@@ -61,14 +73,8 @@ class DeclarationExtractor:
         # Check if this is a variable symbol (includes logic declarations)
         match obj:
             case UninstantiatedDefSymbol():
-                unpacked_connections = (
-                    x
-                    for conn in obj.portConnections
-                    if (x := self._unpack_port_connection(conn)) is not None
-                )
-                ports = list(zip(obj.portNames, unpacked_connections))
-                if ports:
-                    self.names.append(f"{obj.name} {ports}")
+                if ports := self._unpack_ports(obj):
+                    self.names.append(f"{obj.name} {obj.definitionName} {ports}")
 
 
 def extract_declaration_names(systemverilog_code: str) -> list[str]:
