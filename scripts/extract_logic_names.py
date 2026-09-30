@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Michael Popoloski
 # SPDX-License-Identifier: MIT
 
+# modified from:
+# https://github.com/MikePopoloski/slang/blob/292805396d9c9952a457f9d14ff900c8f6a3d3f2/pyslang/examples/extract_logic_names.py
+
 """Extract the names of all logic declarations from SystemVerilog code.
 
 This example demonstrates how to use the pyslang visitor system to traverse
@@ -105,10 +108,10 @@ def extract_logic_declaration_names(systemverilog_code: str) -> list[str]:
         diagEngine.issue(diag)
         has_error = diag.isError() or has_error
 
-    print(diagClient.getString())
+    # print(diagClient.getString())
 
-    if has_error:
-        raise RuntimeError("Compilation had errors")
+    # if has_error:
+    #     raise RuntimeError("Compilation had errors")
 
     # Create our visitor to extract logic declaration names
     extractor = LogicDeclarationExtractor()
