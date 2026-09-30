@@ -16,6 +16,11 @@ The script will parse a sample SystemVerilog module and print the names of
 all relevant declarations found in the code.
 """
 
+import traceback
+from collections.abc import Callable, Iterable
+from graphlib import TopologicalSorter
+
+import z3
 from pydantic import BaseModel
 from pyslang import DiagnosticEngine, TextDiagnosticClient
 from pyslang.ast import (
@@ -30,11 +35,14 @@ from pyslang.ast import (
 from pyslang.parsing import Token
 from pyslang.syntax import SyntaxNode, SyntaxTree
 
+type PortName = str
+type NetName = str
 
 class VerilogModuleInstance(BaseModel):
     instance_name: str
     module_name: str
-    ports: dict[str, str]
+    input_nets: dict[NetName, PortName]
+    operation: Callable
 
 
 class DeclarationExtractor:
@@ -49,7 +57,8 @@ class DeclarationExtractor:
     def __init__(self):
         self.inputs: set[str] = set()
         self.outputs: set[str] = set()
-        self.instances: list[VerilogModuleInstance] = []
+        self.drivers: dict[NetName, VerilogModuleInstance] = {}
+        self.reg: dict[NetName, NetName] = {}  # output net -> input net mapping
 
     @staticmethod
     def _unpack_port_connection(connection):
@@ -73,6 +82,96 @@ class DeclarationExtractor:
             for name, connection in zip(symbol.portNames, unpacked_connections)
         }
 
+    def _add_logic(
+        self, symbol: UninstantiatedDefSymbol, out_port: PortName, operation
+    ):
+        out_net: NetName = (input_ports := self._unpack_ports(symbol)).pop(out_port)
+
+        input_nets = {
+            net_name: port_name for port_name, net_name in input_ports.items()
+        }
+
+        self.drivers[out_net] = VerilogModuleInstance(
+            instance_name=symbol.name,
+            module_name=symbol.definitionName,
+            input_nets=input_nets,
+            operation=operation,
+        )
+
+    def _add_reg(
+        self, symbol: UninstantiatedDefSymbol, in_port: PortName, out_port: PortName
+    ):
+        port_mapping = self._unpack_ports(symbol)
+        self.reg[port_mapping[out_port]] = port_mapping[in_port]
+
+    def _handle_symbol(self, symbol: UninstantiatedDefSymbol):
+        match symbol.definitionName:
+            case str() as s if s.startswith(
+                (
+                    "sky130_fd_sc_hd__clkbuf_",
+                    "sky130_fd_sc_hd__decap_",
+                    "sky130_fd_sc_hd__tapvpwrvgnd_",
+                )
+            ):
+                return  # ignore
+            case str() as s if s.startswith("sky130_fd_sc_hd__nand2_"):
+                self._add_logic(symbol, "Y", lambda A, B: z3.Not(z3.And(A, B)))
+            case str() as s if s.startswith("sky130_fd_sc_hd__and2_"):
+                self._add_logic(symbol, "X", lambda A, B: z3.And(A, B))
+            case str() as s if s.startswith("sky130_fd_sc_hd__xor2_"):
+                self._add_logic(symbol, "X", lambda A, B: z3.Xor(A, B))
+            case str() as s if s.startswith("sky130_fd_sc_hd__xnor2_"):
+                self._add_logic(symbol, "Y", lambda A, B: z3.Not(z3.Xor(A, B)))
+            case str() as s if s.startswith("sky130_fd_sc_hd__or2_"):
+                self._add_logic(symbol, "X", lambda A, B: z3.Or(A, B))
+            case str() as s if s.startswith("sky130_fd_sc_hd__nor2_"):
+                self._add_logic(symbol, "Y", lambda A, B: z3.Not(z3.Or(A, B)))
+            case str() as s if s.startswith("sky130_fd_sc_hd__a31o_"):
+                self._add_logic(
+                    symbol,
+                    "X",
+                    lambda A1, A2, A3, B1: z3.Or(z3.And(z3.And(A3, A1), A2), B1),
+                )
+            case str() as s if s.startswith("sky130_fd_sc_hd__a21o_"):
+                self._add_logic(
+                    symbol, "X", lambda A1, A2, B1: z3.Or(z3.And(A1, A2), B1)
+                )
+            case str() as s if s.startswith("sky130_fd_sc_hd__a21bo_"):
+                self._add_logic(
+                    symbol,
+                    "X",
+                    lambda A1, A2, B1_N: z3.Not(z3.And(B1_N, z3.Not(z3.And(A2, A1)))),
+                )
+            case str() as s if s.startswith("sky130_fd_sc_hd__a21boi_"):
+                self._add_logic(
+                    symbol,
+                    "Y",
+                    lambda A1, A2, B1_N: z3.Not(z3.Or(z3.Not(B1_N), z3.And(A1, A2))),
+                )
+            case str() as s if s.startswith("sky130_fd_sc_hd__o21bai_"):
+                self._add_logic(
+                    symbol,
+                    "Y",
+                    lambda A1, A2, B1_N: z3.Not(z3.And(z3.Not(B1_N), z3.Or(A2, A1))),
+                )
+            case str() as s if s.startswith("sky130_fd_sc_hd__and3_"):
+                self._add_logic(symbol, "X", lambda A, B, C: z3.And(z3.And(C, A), B))
+            case str() as s if s.startswith("sky130_fd_sc_hd__and4bb_"):
+                self._add_logic(
+                    symbol,
+                    "X",
+                    lambda A_N, B_N, C, D: z3.And(
+                        z3.And(z3.Not(z3.Or(A_N, B_N)), C), D
+                    ),
+                )
+            case str() as s if s.startswith("sky130_fd_sc_hd__mux2_"):
+                self._add_logic(symbol, "X", lambda A0, A1, S: z3.If(S, A0, A1))
+            case str() as s if s.startswith("sky130_fd_sc_hd__dfrtp_"):
+                self._add_reg(symbol, in_port="D", out_port="Q")
+
+            case definitionName:
+                raise ValueError(f"Unknown definition: {definitionName}")
+
     def __call__(self, obj: Token | SyntaxNode) -> None:
         """
         Visit method called for each node in the AST.
@@ -91,15 +190,42 @@ class DeclarationExtractor:
                 )
                 port_set.add(port.name)
             case UninstantiatedDefSymbol():
-                if ports := self._unpack_ports(obj):
-                    self.instances.append(
-                        VerilogModuleInstance(
-                            instance_name=obj.name,
-                            module_name=obj.definitionName,
-                            ports=ports,
-                        )
-                    )
+                self._handle_symbol(obj)
 
+    def get_order(self) -> Iterable[NetName]:
+        return TopologicalSorter(
+            {
+                output_name: module.input_nets.keys()
+                for output_name, module in self.drivers.items()
+            }
+        ).static_order()
+
+    def step(self, order: Iterable[NetName], state, t):
+        values = dict(state)
+        for i in self.inputs:
+            values[i] = z3.Bool(f"{i}@{t}")
+
+        for net_name in order:
+            if net_name in self.drivers:
+                module = self.drivers[net_name]
+                op_kwargs = {
+                    port_name: values[net_name]
+                    for net_name, port_name in module.input_nets.items()
+                }
+                values[net_name] = module.operation(**op_kwargs)
+        return {net_name: values[net_name] for net_name in self.outputs} | {
+            output_net_name: values[input_net_name]
+            for output_net_name, input_net_name in self.reg.items()
+        }
+
+
+def build_output_expressions(extractor: DeclarationExtractor, steps):
+    order = list(extractor.get_order())
+
+    state = {net_name: z3.BoolVal(False) for net_name in extractor.reg}
+
+    for t in range(steps):
+        state = extractor.step(order, state, t)
 
 def extract_declaration_names(systemverilog_code: str) -> list[str]:
     """
@@ -141,10 +267,15 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
     # Visit all nodes in the compilation root
     compilation.getRoot().visit(extractor)
 
+    build_output_expressions(extractor, 15)
+
     return (
         [f"input: {p}" for p in extractor.inputs]
         + [f"outputs: {p}" for p in extractor.outputs]
-        + [f"{i.instance_name} {i.module_name} {i.ports}" for i in extractor.instances]
+        + [
+            f"{i.instance_name} {i.module_name} {i.input_nets}"
+            for i in extractor.drivers.values()
+        ]
     )
 
 
@@ -205,6 +336,7 @@ def main():
 
             except Exception as e:  # noqa: BLE001 - example keeps going on any per-file error
                 print(f"Error: {e}")
+                traceback.print_exc()
             print()
     else:
         # Use built-in example
