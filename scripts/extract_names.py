@@ -19,9 +19,11 @@ all relevant declarations found in the code.
 from pydantic import BaseModel
 from pyslang import DiagnosticEngine, TextDiagnosticClient
 from pyslang.ast import (
+    ArgumentDirection,
     Compilation,
     NamedValueExpression,
     NetSymbol,
+    PortSymbol,
     SimpleAssertionExpr,
     UninstantiatedDefSymbol,
 )
@@ -45,6 +47,8 @@ class DeclarationExtractor:
     """
 
     def __init__(self):
+        self.inputs: set[str] = set()
+        self.outputs: set[str] = set()
         self.instances: list[VerilogModuleInstance] = []
 
     @staticmethod
@@ -79,6 +83,13 @@ class DeclarationExtractor:
         """
         # Check if this is a variable symbol (includes logic declarations)
         match obj:
+            case PortSymbol() as port:
+                port_set = (
+                    self.inputs
+                    if port.direction == ArgumentDirection.In
+                    else self.outputs
+                )
+                port_set.add(port.name)
             case UninstantiatedDefSymbol():
                 if ports := self._unpack_ports(obj):
                     self.instances.append(
@@ -130,7 +141,11 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
     # Visit all nodes in the compilation root
     compilation.getRoot().visit(extractor)
 
-    return [f"{i.instance_name} {i.module_name} {i.ports}" for i in extractor.instances]
+    return (
+        [f"input: {p}" for p in extractor.inputs]
+        + [f"outputs: {p}" for p in extractor.outputs]
+        + [f"{i.instance_name} {i.module_name} {i.ports}" for i in extractor.instances]
+    )
 
 
 def extract_declarations_from_file(filepath: str) -> list[str]:
