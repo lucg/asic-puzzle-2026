@@ -18,13 +18,10 @@ all relevant declarations found in the code.
 
 from pyslang import DiagnosticEngine, TextDiagnosticClient
 from pyslang.ast import (
-    AssertionExpr,
-    AssertionExprKind,
     Compilation,
-    Expression,
-    ExpressionKind,
-    Symbol,
-    SymbolKind,
+    NamedValueExpression,
+    NetSymbol,
+    SimpleAssertionExpr,
     UninstantiatedDefSymbol,
 )
 from pyslang.parsing import Token
@@ -46,11 +43,9 @@ class DeclarationExtractor:
     @staticmethod
     def _unpack_port_connection(connection):
         match connection:
-            case AssertionExpr(
-                kind=AssertionExprKind.Simple,
-                expr=Expression(
-                    kind=ExpressionKind.NamedValue,
-                    symbol=Symbol(kind=SymbolKind.Net, name=symbol_name),
+            case SimpleAssertionExpr(
+                expr=NamedValueExpression(
+                    symbol=NetSymbol(name=symbol_name),
                 ),
             ):
                 return symbol_name
@@ -65,8 +60,7 @@ class DeclarationExtractor:
         """
         # Check if this is a variable symbol (includes logic declarations)
         match obj:
-            case Symbol(kind=SymbolKind.UninstantiatedDef):
-                obj: UninstantiatedDefSymbol
+            case UninstantiatedDefSymbol():
                 unpacked_connections = (
                     x
                     for conn in obj.portConnections
