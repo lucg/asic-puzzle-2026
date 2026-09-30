@@ -16,6 +16,7 @@ The script will parse a sample SystemVerilog module and print the names of
 all relevant declarations found in the code.
 """
 
+from pydantic import BaseModel
 from pyslang import DiagnosticEngine, TextDiagnosticClient
 from pyslang.ast import (
     Compilation,
@@ -28,6 +29,12 @@ from pyslang.parsing import Token
 from pyslang.syntax import SyntaxNode, SyntaxTree
 
 
+class VerilogModuleInstance(BaseModel):
+    instance_name: str
+    module_name: str
+    ports: dict[str, str]
+
+
 class DeclarationExtractor:
     """
     Visitor class to extract names of declarations.
@@ -38,7 +45,7 @@ class DeclarationExtractor:
     """
 
     def __init__(self):
-        self.names = []
+        self.instances: list[VerilogModuleInstance] = []
 
     @staticmethod
     def _unpack_port_connection(connection):
@@ -74,7 +81,13 @@ class DeclarationExtractor:
         match obj:
             case UninstantiatedDefSymbol():
                 if ports := self._unpack_ports(obj):
-                    self.names.append(f"{obj.name} {obj.definitionName} {ports}")
+                    self.instances.append(
+                        VerilogModuleInstance(
+                            instance_name=obj.name,
+                            module_name=obj.definitionName,
+                            ports=ports,
+                        )
+                    )
 
 
 def extract_declaration_names(systemverilog_code: str) -> list[str]:
@@ -117,7 +130,7 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
     # Visit all nodes in the compilation root
     compilation.getRoot().visit(extractor)
 
-    return extractor.names
+    return [f"{i.instance_name} {i.module_name} {i.ports}" for i in extractor.instances]
 
 
 def extract_declarations_from_file(filepath: str) -> list[str]:
