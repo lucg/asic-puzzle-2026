@@ -182,13 +182,10 @@ class DeclarationExtractor:
         """
         # Check if this is a variable symbol (includes logic declarations)
         match obj:
-            case PortSymbol() as port:
-                port_set = (
-                    self.inputs
-                    if port.direction == ArgumentDirection.In
-                    else self.outputs
-                )
-                port_set.add(port.name)
+            case PortSymbol(direction=ArgumentDirection.In, name=name):
+                self.inputs.add(name)
+            case PortSymbol(direction=ArgumentDirection.Out, name=name):
+                self.outputs.add(name)
             case UninstantiatedDefSymbol():
                 self._handle_symbol(obj)
 
@@ -209,8 +206,11 @@ class DeclarationExtractor:
             if net_name in self.drivers:
                 module = self.drivers[net_name]
                 op_kwargs = {
-                    port_name: values[net_name]
-                    for net_name, port_name in module.input_nets.items()
+                    input_port_name: values[input_net_name]
+                    for input_net_name, input_port_name in module.input_nets.items()
+                    if input_net_name in self.inputs
+                    or input_net_name in self.drivers
+                    or input_net_name in self.regs
                 }
                 values[net_name] = module.operation(**op_kwargs)
         return {net_name: values[net_name] for net_name in self.outputs} | {
