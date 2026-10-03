@@ -285,6 +285,20 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
     print("Check satisfiability... ", end="")
     if s.check() == z3.sat:
         print("passed!")
+        m = s.model()
+
+        var_times = {}
+        for d in m.decls():
+            input_name, t = d.name().rsplit("@", 1)
+            t = int(t)
+
+            var_times[t] = var_times.get(t, {}) | {input_name: m[d]}
+
+        for time in sorted(var_times.keys()):
+            print(f"@ {time}")
+            var_values: dict = var_times[time]
+            for var_name in sorted(var_values.keys()):
+                print(f"  {var_name}={var_values[var_name]}")
     else:
         print("UNSAT")
     print()
