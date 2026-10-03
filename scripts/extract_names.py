@@ -58,7 +58,7 @@ class DeclarationExtractor:
         self.inputs: set[str] = set()
         self.outputs: set[str] = set()
         self.drivers: dict[NetName, VerilogModuleInstance] = {}
-        self.reg: dict[NetName, NetName] = {}  # output net -> input net mapping
+        self.regs: dict[NetName, NetName] = {}  # output net -> input net mapping
 
     @staticmethod
     def _unpack_port_connection(connection):
@@ -102,7 +102,7 @@ class DeclarationExtractor:
         self, symbol: UninstantiatedDefSymbol, in_port: PortName, out_port: PortName
     ):
         port_mapping = self._unpack_ports(symbol)
-        self.reg[port_mapping[out_port]] = port_mapping[in_port]
+        self.regs[port_mapping[out_port]] = port_mapping[in_port]
 
     def _handle_symbol(self, symbol: UninstantiatedDefSymbol):
         match symbol.definitionName:
@@ -215,14 +215,14 @@ class DeclarationExtractor:
                 values[net_name] = module.operation(**op_kwargs)
         return {net_name: values[net_name] for net_name in self.outputs} | {
             output_net_name: values[input_net_name]
-            for output_net_name, input_net_name in self.reg.items()
+            for output_net_name, input_net_name in self.regs.items()
         }
 
 
 def build_output_expressions(extractor: DeclarationExtractor, steps):
     order = list(extractor.get_order())
 
-    state = {net_name: z3.BoolVal(False) for net_name in extractor.reg}
+    state = {net_name: z3.BoolVal(False) for net_name in extractor.regs}
 
     for t in range(steps):
         state = extractor.step(order, state, t)
