@@ -165,7 +165,7 @@ class DeclarationExtractor:
                     ),
                 )
             case str() as s if s.startswith("sky130_fd_sc_hd__mux2_"):
-                self._add_logic(symbol, "X", lambda A0, A1, S: z3.If(S, A0, A1))
+                self._add_logic(symbol, "X", lambda A0, A1, S: z3.If(S, A1, A0))
             case str() as s if s.startswith("sky130_fd_sc_hd__dfrtp_"):
                 self._add_reg(symbol, in_port="D", out_port="Q")
 
