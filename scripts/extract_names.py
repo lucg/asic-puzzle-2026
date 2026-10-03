@@ -218,15 +218,14 @@ class DeclarationExtractor:
             for output_net_name, input_net_name in self.regs.items()
         }
 
+    def build_output_expressions(self, steps):
+        order = list(self.get_order())
 
-def build_output_expressions(extractor: DeclarationExtractor, steps):
-    order = list(extractor.get_order())
+        state = {net_name: z3.BoolVal(False) for net_name in self.regs}
 
-    state = {net_name: z3.BoolVal(False) for net_name in extractor.regs}
-
-    for t in range(steps):
-        state = extractor.step(order, state, t)
-    return state
+        for t in range(steps):
+            state = self.step(order, state, t)
+        return state
 
 def extract_declaration_names(systemverilog_code: str) -> list[str]:
     """
@@ -277,7 +276,7 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
         ]
     )
 
-    state = build_output_expressions(extractor, 10)
+    state = extractor.build_output_expressions(10)
 
     s = z3.Solver()
     s.add(z3.And(state["S"] == z3.BoolVal(True)))
