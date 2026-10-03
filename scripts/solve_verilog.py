@@ -32,11 +32,11 @@ from pyslang.ast import (
 from pyslang.parsing import Token
 from pyslang.syntax import SyntaxNode, SyntaxTree
 
-from .extractor import DeclarationExtractor as DeclarationExtractorBase
-from .extractor import NetName, PortName, VerilogModuleInstance
+from .expr_builder import ExpressionBuilder as ExpressionBuilderBase
+from .expr_builder import NetName, PortName, VerilogModuleInstance
 
 
-class DeclarationExtractor(DeclarationExtractorBase):
+class ExpressionBuilder(ExpressionBuilderBase):
     @staticmethod
     def _unpack_port_connection(connection):
         match connection:
@@ -134,7 +134,7 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
     #     raise RuntimeError("Compilation had errors")
 
     # Create our visitor to extract logic declaration names
-    extractor = DeclarationExtractor()
+    extractor = ExpressionBuilder()
 
     # Visit all nodes in the compilation root
     compilation.getRoot().visit(extractor)

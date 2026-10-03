@@ -15,15 +15,7 @@ class VerilogModuleInstance(BaseModel):
     operation: Callable
 
 
-class DeclarationExtractor:
-    """
-    Visitor class to extract names of declarations.
-
-    1. Filter for specific symbol types (VariableSymbol)
-    2. Check the type of variables
-    3. Extract and collect symbol names
-    """
-
+class ExpressionBuilder:
     def __init__(self):
         self.inputs: set[str] = set()
         self.outputs: set[str] = set()
