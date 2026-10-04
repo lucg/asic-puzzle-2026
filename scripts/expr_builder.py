@@ -35,6 +35,7 @@ class ExpressionBuilder:
                     "sky130_fd_sc_hd__clkbuf_",
                     "sky130_fd_sc_hd__decap_",
                     "sky130_fd_sc_hd__tapvpwrvgnd_",
+                    "VIA_",
                 )
             ):
                 return  # ignore
