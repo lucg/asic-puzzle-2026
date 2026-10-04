@@ -132,3 +132,32 @@ class ExpressionBuilder:
         for t in range(steps):
             state = self.step(order, state, t)
         return state
+
+    def check_sat(self, s: z3.Solver, state: dict):
+        print("Check satisfiability... ", end="")
+        if s.check() == z3.sat:
+            print("passed!")
+            m = s.model()
+    
+            input_packed = {}
+            var_times = {}
+            for d in m.decls():
+                input_name, t = d.name().rsplit("@", 1)
+                t = int(t)
+    
+                input_packed[input_name] = input_packed.get(input_name, 0) | (
+                    bool(m[d]) << t
+                )
+                var_times[t] = var_times.get(t, {}) | {input_name: m[d]}
+    
+            for time in sorted(var_times.keys()):
+                print(f"@ {time}")
+                var_values: dict = var_times[time]
+                for var_name in sorted(var_values.keys()):
+                    print(f"  {var_name}={var_values[var_name]}")
+    
+            print()
+            for input_name in sorted(input_packed.keys()):
+                print(f"{input_name:2} packed: {input_packed[input_name]:b}")
+        else:
+            print("UNSAT")
