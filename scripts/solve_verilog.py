@@ -96,7 +96,7 @@ class ExpressionBuilder(ExpressionBuilderBase):
             case PortSymbol(direction=ArgumentDirection.Out, name=name):
                 self.outputs.add(name)
             case UninstantiatedDefSymbol():
-                self.handle_symbol(obj)
+                self.handle_symbol(obj, obj.definitionName)
 
 
 def extract_declaration_names(systemverilog_code: str) -> list[str]:

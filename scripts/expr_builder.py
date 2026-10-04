@@ -28,8 +28,8 @@ class ExpressionBuilder:
     def _add_reg(self, symbol, in_port: PortName, out_port: PortName):
         raise NotImplementedError
 
-    def handle_symbol(self, symbol):
-        match symbol.definitionName:
+    def handle_symbol(self, symbol, name):
+        match name:
             case str() as s if s.startswith(
                 (
                     "sky130_fd_sc_hd__clkbuf_",
@@ -92,9 +92,8 @@ class ExpressionBuilder:
                 self._add_logic(symbol, "X", lambda A0, A1, S: z3.If(S, A1, A0))
             case str() as s if s.startswith("sky130_fd_sc_hd__dfrtp_"):
                 self._add_reg(symbol, in_port="D", out_port="Q")
-
-            case definitionName:
-                raise ValueError(f"Unknown definition: {definitionName}")
+            case _:
+                raise ValueError(f"Unknown symbol: {name}")
 
     def get_order(self) -> Iterable[NetName]:
         return TopologicalSorter(
