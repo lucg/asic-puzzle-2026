@@ -17,11 +17,8 @@ all relevant declarations found in the code.
 """
 
 import traceback
-from collections.abc import Callable, Iterable
-from graphlib import TopologicalSorter
 
 import z3
-from pydantic import BaseModel
 from pyslang import DiagnosticEngine, TextDiagnosticClient
 from pyslang.ast import (
     ArgumentDirection,
@@ -35,31 +32,11 @@ from pyslang.ast import (
 from pyslang.parsing import Token
 from pyslang.syntax import SyntaxNode, SyntaxTree
 
-type PortName = str
-type NetName = str
-
-class VerilogModuleInstance(BaseModel):
-    instance_name: str
-    module_name: str
-    input_nets: dict[NetName, PortName]
-    operation: Callable
+from .expr_builder import ExpressionBuilder as ExpressionBuilderBase
+from .expr_builder import NetName, PortName, VerilogModuleInstance
 
 
-class DeclarationExtractor:
-    """
-    Visitor class to extract names of declarations.
-
-    1. Filter for specific symbol types (VariableSymbol)
-    2. Check the type of variables
-    3. Extract and collect symbol names
-    """
-
-    def __init__(self):
-        self.inputs: set[str] = set()
-        self.outputs: set[str] = set()
-        self.drivers: dict[NetName, VerilogModuleInstance] = {}
-        self.regs: dict[NetName, NetName] = {}  # output net -> input net mapping
-
+class ExpressionBuilder(ExpressionBuilderBase):
     @staticmethod
     def _unpack_port_connection(connection):
         match connection:
@@ -104,74 +81,6 @@ class DeclarationExtractor:
         port_mapping = self._unpack_ports(symbol)
         self.regs[port_mapping[out_port]] = port_mapping[in_port]
 
-    def _handle_symbol(self, symbol: UninstantiatedDefSymbol):
-        match symbol.definitionName:
-            case str() as s if s.startswith(
-                (
-                    "sky130_fd_sc_hd__clkbuf_",
-                    "sky130_fd_sc_hd__decap_",
-                    "sky130_fd_sc_hd__tapvpwrvgnd_",
-                )
-            ):
-                return  # ignore
-            case str() as s if s.startswith("sky130_fd_sc_hd__nand2_"):
-                self._add_logic(symbol, "Y", lambda A, B: z3.Not(z3.And(A, B)))
-            case str() as s if s.startswith("sky130_fd_sc_hd__and2_"):
-                self._add_logic(symbol, "X", lambda A, B: z3.And(A, B))
-            case str() as s if s.startswith("sky130_fd_sc_hd__xor2_"):
-                self._add_logic(symbol, "X", lambda A, B: z3.Xor(A, B))
-            case str() as s if s.startswith("sky130_fd_sc_hd__xnor2_"):
-                self._add_logic(symbol, "Y", lambda A, B: z3.Not(z3.Xor(A, B)))
-            case str() as s if s.startswith("sky130_fd_sc_hd__or2_"):
-                self._add_logic(symbol, "X", lambda A, B: z3.Or(A, B))
-            case str() as s if s.startswith("sky130_fd_sc_hd__nor2_"):
-                self._add_logic(symbol, "Y", lambda A, B: z3.Not(z3.Or(A, B)))
-            case str() as s if s.startswith("sky130_fd_sc_hd__a31o_"):
-                self._add_logic(
-                    symbol,
-                    "X",
-                    lambda A1, A2, A3, B1: z3.Or(z3.And(z3.And(A3, A1), A2), B1),
-                )
-            case str() as s if s.startswith("sky130_fd_sc_hd__a21o_"):
-                self._add_logic(
-                    symbol, "X", lambda A1, A2, B1: z3.Or(z3.And(A1, A2), B1)
-                )
-            case str() as s if s.startswith("sky130_fd_sc_hd__a21bo_"):
-                self._add_logic(
-                    symbol,
-                    "X",
-                    lambda A1, A2, B1_N: z3.Not(z3.And(B1_N, z3.Not(z3.And(A2, A1)))),
-                )
-            case str() as s if s.startswith("sky130_fd_sc_hd__a21boi_"):
-                self._add_logic(
-                    symbol,
-                    "Y",
-                    lambda A1, A2, B1_N: z3.Not(z3.Or(z3.Not(B1_N), z3.And(A1, A2))),
-                )
-            case str() as s if s.startswith("sky130_fd_sc_hd__o21bai_"):
-                self._add_logic(
-                    symbol,
-                    "Y",
-                    lambda A1, A2, B1_N: z3.Not(z3.And(z3.Not(B1_N), z3.Or(A2, A1))),
-                )
-            case str() as s if s.startswith("sky130_fd_sc_hd__and3_"):
-                self._add_logic(symbol, "X", lambda A, B, C: z3.And(z3.And(C, A), B))
-            case str() as s if s.startswith("sky130_fd_sc_hd__and4bb_"):
-                self._add_logic(
-                    symbol,
-                    "X",
-                    lambda A_N, B_N, C, D: z3.And(
-                        z3.And(z3.Not(z3.Or(A_N, B_N)), C), D
-                    ),
-                )
-            case str() as s if s.startswith("sky130_fd_sc_hd__mux2_"):
-                self._add_logic(symbol, "X", lambda A0, A1, S: z3.If(S, A1, A0))
-            case str() as s if s.startswith("sky130_fd_sc_hd__dfrtp_"):
-                self._add_reg(symbol, in_port="D", out_port="Q")
-
-            case definitionName:
-                raise ValueError(f"Unknown definition: {definitionName}")
-
     def __call__(self, obj: Token | SyntaxNode) -> None:
         """
         Visit method called for each node in the AST.
@@ -187,46 +96,8 @@ class DeclarationExtractor:
             case PortSymbol(direction=ArgumentDirection.Out, name=name):
                 self.outputs.add(name)
             case UninstantiatedDefSymbol():
-                self._handle_symbol(obj)
+                self.handle_symbol(obj, obj.definitionName)
 
-    def get_order(self) -> Iterable[NetName]:
-        return TopologicalSorter(
-            {
-                output_name: module.input_nets.keys()
-                for output_name, module in self.drivers.items()
-            }
-        ).static_order()
-
-    def step(self, order: Iterable[NetName], state, t):
-        values = dict(state)
-        for i in self.inputs:
-            values[i] = z3.Bool(f"{i}@{t}")
-
-        for net_name in order:
-            if net_name in self.drivers:
-                module = self.drivers[net_name]
-                op_kwargs = {
-                    input_port_name: values[input_net_name]
-                    for input_net_name, input_port_name in module.input_nets.items()
-                    if input_net_name in self.inputs
-                    or input_net_name in self.drivers
-                    or input_net_name in self.regs
-                }
-                values[net_name] = module.operation(**op_kwargs)
-        return {net_name: values[net_name] for net_name in self.outputs} | {
-            output_net_name: values[input_net_name]
-            for output_net_name, input_net_name in self.regs.items()
-        }
-
-
-def build_output_expressions(extractor: DeclarationExtractor, steps):
-    order = list(extractor.get_order())
-
-    state = {net_name: z3.BoolVal(False) for net_name in extractor.regs}
-
-    for t in range(steps):
-        state = extractor.step(order, state, t)
-    return state
 
 def extract_declaration_names(systemverilog_code: str) -> list[str]:
     """
@@ -263,7 +134,7 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
     #     raise RuntimeError("Compilation had errors")
 
     # Create our visitor to extract logic declaration names
-    extractor = DeclarationExtractor()
+    extractor = ExpressionBuilder()
 
     # Visit all nodes in the compilation root
     compilation.getRoot().visit(extractor)
@@ -277,38 +148,12 @@ def extract_declaration_names(systemverilog_code: str) -> list[str]:
         ]
     )
 
-    state = build_output_expressions(extractor, 10)
+    state = extractor.build_output_expressions(10)
 
     s = z3.Solver()
     s.add(z3.And(state["S"] == z3.BoolVal(True)))
 
-    print("Check satisfiability... ", end="")
-    if s.check() == z3.sat:
-        print("passed!")
-        m = s.model()
-
-        input_packed = {}
-        var_times = {}
-        for d in m.decls():
-            input_name, t = d.name().rsplit("@", 1)
-            t = int(t)
-
-            input_packed[input_name] = input_packed.get(input_name, 0) | (
-                bool(m[d]) << t
-            )
-            var_times[t] = var_times.get(t, {}) | {input_name: m[d]}
-
-        for time in sorted(var_times.keys()):
-            print(f"@ {time}")
-            var_values: dict = var_times[time]
-            for var_name in sorted(var_values.keys()):
-                print(f"  {var_name}={var_values[var_name]}")
-
-        print()
-        for input_name in sorted(input_packed.keys()):
-            print(f"{input_name:2} packed: {input_packed[input_name]:b}")
-    else:
-        print("UNSAT")
+    extractor.check_sat(s, state)
     print()
 
     return info
