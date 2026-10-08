@@ -75,11 +75,6 @@ class ExpressionBuilder(ExpressionBuilderBase):
             operation=operation,
         )
 
-    def _add_reg(
-        self, symbol: UninstantiatedDefSymbol, in_port: PortName, out_port: PortName
-    ):
-        port_mapping = self._unpack_ports(symbol)
-        self.regs[port_mapping[out_port]] = port_mapping[in_port]
 
     def __call__(self, obj: Token | SyntaxNode) -> None:
         """

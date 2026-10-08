@@ -34,10 +34,6 @@ class ExpressionBuilder(ExpressionBuilderBase):
             operation=operation,
         )
 
-    def _add_reg(self, sc: SymbolType, in_port: PortName, out_port: PortName):
-        port_mapping = self._unpack_ports(sc)
-        self.regs[port_mapping[out_port]] = port_mapping[in_port]
-
 
 WIRE_DTYPE = 20
 LABEL_DTYPE = 5

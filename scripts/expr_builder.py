@@ -22,11 +22,16 @@ class ExpressionBuilder:
         self.drivers: dict[NetName, VerilogModuleInstance] = {}
         self.regs: dict[NetName, NetName] = {}  # output net -> input net mapping
 
+    @classmethod
+    def _unpack_ports(cls, symbol):
+        raise NotImplementedError
+
     def _add_logic(self, symbol, out_port: PortName, operation):
         raise NotImplementedError
 
     def _add_reg(self, symbol, in_port: PortName, out_port: PortName):
-        raise NotImplementedError
+        port_mapping = self._unpack_ports(symbol)
+        self.regs[port_mapping[out_port]] = port_mapping[in_port]
 
     def handle_symbol(self, symbol, name):
         match name:
