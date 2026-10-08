@@ -145,7 +145,7 @@ def build_netlist(layout, cell):
 
 if __name__ == "__main__":
     layout = kdb.Layout()
-    layout.read("warmup/04_final.gds")
+    layout.read("puzzle.gds")
     top = layout.top_cell()
 
     netlist = (l2n := build_netlist(layout, top)).netlist()
@@ -161,7 +161,9 @@ if __name__ == "__main__":
     driven = set(builder.drivers) | set(builder.regs)
     for top_pin in netlist_top.each_pin():
         top_pin_name = top_pin.name()
-        if top_pin_name not in {"A", "B", "S", "en", "clk", "rst_n"}:
+        if top_pin_name not in (
+            {"clk", "enable", "I", "rst_n", "success"} | {f"O[{i}]" for i in range(8)}
+        ):
             continue
         (builder.outputs if top_pin_name in driven else builder.inputs).add(
             top_pin_name
@@ -170,7 +172,7 @@ if __name__ == "__main__":
     state = builder.build_output_expressions(10)
 
     s = z3.Solver()
-    s.add(z3.And(state["S"] == z3.BoolVal(True)))
+    s.add(z3.And(state["success"] == z3.BoolVal(True)))
 
     builder.check_sat(s, state)
     print()
