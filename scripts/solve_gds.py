@@ -191,12 +191,11 @@ def main(
         f"unrolling {steps} steps"
         + (" (rst_n held high)" if hold_rst_deasserted else "")
     )
-    successes = [
-        state["success"]
-        for state in tqdm(
-            builder.iter_output_trace(steps), desc="Building trace steps", total=steps
-        )
-    ]
+    # trace[k] = state after k clock cycles (trace[0] is the reset state)
+    trace = list(
+        tqdm(builder.iter_output_trace(steps), desc="Building trace steps", total=steps)
+    )
+    successes = [state["success"] for state in trace]
 
     def new_solver() -> z3.Solver:
         s = z3.Solver()
@@ -219,7 +218,13 @@ def main(
         return
     if earliest:
         print(f"earliest success is after {cycles} clock edges")
-    builder.check_sat(s)
+        # The O bus streams its message only after enable drops, so drop it
+        # for the remaining edges of the trace (inputs there are otherwise
+        # unconstrained) to make the message visible in the decoded output.
+        if "enable" in builder.inputs:
+            for t in range(cycles, steps):
+                s.add(z3.Not(z3.Bool(f"enable@{t}")))
+    builder.check_sat(s, trace)
     print()
 
 

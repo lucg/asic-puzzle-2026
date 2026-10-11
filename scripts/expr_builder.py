@@ -515,11 +515,15 @@ class ExpressionBuilder:
             pass
         return state
 
-    def check_sat(self, s: z3.Solver):
+    def check_sat(self, s: z3.Solver, trace: list[dict] | None = None):
+        """Print the satisfying inputs. With `trace` (per-edge state dicts,
+        index k = after k edges) also decode the O bus as ASCII per edge."""
         print("Check satisfiability... ", end="")
         if s.check() == z3.sat:
             print("passed!")
             m = s.model()
+            if trace is not None:
+                self.print_output_bus(m, trace)
     
             input_packed = {}
             var_times = {}
@@ -543,3 +547,27 @@ class ExpressionBuilder:
                 print(f"{input_name:2} packed: {input_packed[input_name]:b}")
         else:
             print("UNSAT")
+
+    def print_output_bus(self, m: z3.ModelRef, trace: list[dict], bus="O", width=8):
+        """Decode the output bus per edge under model `m` and print the
+        edges where it is nonzero or success changes, plus the printable
+        bytes as one string."""
+        bits = [f"{bus}[{i}]" for i in range(width)]
+        if not all(b in self.outputs for b in bits):
+            return
+
+        def bit(e) -> bool:
+            return z3.is_true(m.eval(e, model_completion=True))
+
+        print(f"\n{bus} bus per edge (edge, success, byte, ascii):")
+        text, prev_success = [], False
+        for k, st in enumerate(trace[1:], start=1):
+            byte = sum(bit(st[b]) << i for i, b in enumerate(bits))
+            success = bit(st["success"]) if "success" in st else None
+            printable = 32 <= byte < 127
+            if byte or success != prev_success:
+                print(f"  {k:4} {int(bool(success))} 0x{byte:02x} {chr(byte) if printable else '.'}")
+            if printable:
+                text.append(chr(byte))
+            prev_success = success
+        print(f"{bus} as text: {''.join(text)!r}")
