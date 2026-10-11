@@ -1,4 +1,5 @@
 import klayout.db as kdb
+import typer
 import z3
 from pydantic import BaseModel
 
@@ -143,7 +144,7 @@ def build_netlist(layout, cell):
     return l2n
 
 
-if __name__ == "__main__":
+def main(steps: int = 10):
     layout = kdb.Layout()
     layout.read("puzzle.gds")
     top = layout.top_cell()
@@ -172,10 +173,14 @@ if __name__ == "__main__":
     if undriven := builder.add_undriven_as_inputs():
         print(f"undriven nets treated as free inputs: {sorted(undriven)}")
 
-    state = builder.build_output_expressions(10)
+    state = builder.build_output_expressions(steps)
 
     s = z3.Solver()
     s.add(z3.And(state["success"] == z3.BoolVal(True)))
 
     builder.check_sat(s, state)
     print()
+
+
+if __name__ == "__main__":
+    typer.run(main)
