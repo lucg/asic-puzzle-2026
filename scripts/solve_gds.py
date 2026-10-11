@@ -169,6 +169,9 @@ if __name__ == "__main__":
             top_pin_name
         )
 
+    if undriven := builder.add_undriven_as_inputs():
+        print(f"undriven nets treated as free inputs: {sorted(undriven)}")
+
     state = builder.build_output_expressions(10)
 
     s = z3.Solver()

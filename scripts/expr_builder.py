@@ -7,6 +7,9 @@ from pydantic import BaseModel
 type PortName = str
 type NetName = str
 
+# Power, ground, well taps and unnamed pins (never logic inputs)
+NON_LOGIC_PORTS = {"VPWR", "VGND", "VPB", "VNB", ""}
+
 
 class VerilogModuleInstance(BaseModel):
     instance_name: str
@@ -55,6 +58,31 @@ class ExpressionBuilder:
             or input_net_name in self.drivers
             or input_net_name in self.regs
         }
+
+    def undriven_nets(self) -> set[NetName]:
+        return {
+            net
+            for module in self.drivers.values()
+            if not module.is_const
+            for net, port in module.input_nets.items()
+            if port not in NON_LOGIC_PORTS
+            and net not in self.inputs
+            and net not in self.drivers
+            and net not in self.regs
+        }
+
+    def add_undriven_as_inputs(self) -> set[NetName]:
+        """Treat undriven nets as free symbolic inputs so the solver may pick
+        any value for them.
+
+        Hopefully, these don't end up in the solution, but if they do then either
+        the design or our encoded cell logic has a problem.
+
+        Returns the set that was added.
+        """
+        undriven = self.undriven_nets()
+        self.inputs |= undriven
+        return undriven
 
     def handle_symbol(self, symbol, name):
         match name:
