@@ -1,6 +1,11 @@
+from collections.abc import Callable
+from typing import Annotated
+
 import klayout.db as kdb
+import typer
 import z3
 from pydantic import BaseModel
+from tqdm import tqdm
 
 from .expr_builder import ExpressionBuilder as ExpressionBuilderBase
 from .expr_builder import NetName, PortName, VerilogModuleInstance
@@ -33,10 +38,6 @@ class ExpressionBuilder(ExpressionBuilderBase):
             input_nets=input_nets,
             operation=operation,
         )
-
-    def _add_reg(self, sc: SymbolType, in_port: PortName, out_port: PortName):
-        port_mapping = self._unpack_ports(sc)
-        self.regs[port_mapping[out_port]] = port_mapping[in_port]
 
 
 WIRE_DTYPE = 20
@@ -147,9 +148,19 @@ def build_netlist(layout, cell):
     return l2n
 
 
-if __name__ == "__main__":
+def main(
+    steps: int = 150,
+    *,
+    hold_rst_deasserted: bool = True,
+    earliest: Annotated[
+        bool,
+        typer.Option(
+            help="Scan to find smallest number of clock cycles at which 'success' can be high, with binary search."
+        ),
+    ] = False,
+):
     layout = kdb.Layout()
-    layout.read("warmup/04_final.gds")
+    layout.read("puzzle.gds")
     top = layout.top_cell()
 
     netlist = (l2n := build_netlist(layout, top)).netlist()
@@ -165,16 +176,70 @@ if __name__ == "__main__":
     driven = set(builder.drivers) | set(builder.regs)
     for top_pin in netlist_top.each_pin():
         top_pin_name = top_pin.name()
-        if top_pin_name not in {"A", "B", "S", "en", "clk", "rst_n"}:
+        if top_pin_name not in (
+            {"clk", "enable", "I", "rst_n", "success"} | {f"O[{i}]" for i in range(8)}
+        ):
             continue
         (builder.outputs if top_pin_name in driven else builder.inputs).add(
             top_pin_name
         )
 
-    state = builder.build_output_expressions(10)
+    if undriven := builder.add_undriven_as_inputs():
+        print(f"undriven nets treated as free inputs: {sorted(undriven)}")
 
-    s = z3.Solver()
-    s.add(z3.And(state["S"] == z3.BoolVal(True)))
+    print(
+        f"unrolling {steps} steps"
+        + (" (rst_n held high)" if hold_rst_deasserted else "")
+    )
+    successes = [
+        state["success"]
+        for state in tqdm(
+            builder.iter_output_trace(steps), desc="Building trace steps", total=steps
+        )
+    ]
 
-    builder.check_sat(s, state)
+    def new_solver() -> z3.Solver:
+        s = z3.Solver()
+        if hold_rst_deasserted:
+            # initial state is already the reset state; keep rst_n deasserted
+            for t in range(steps):
+                s.add(z3.Bool(f"rst_n@{t}"))
+        return s
+
+    if earliest:
+        print(f"Searching up to {steps} cycles...")
+        cycles, s = find_earliest_success(new_solver, successes)
+    else:
+        print(f"checking success within {steps} clock edges...")
+        s = new_solver()
+        s.add(z3.Or(successes[1:]))
+
+    if s is None or s.check() != z3.sat:
+        print("UNSAT: success not reachable within the bound")
+        return
+    if earliest:
+        print(f"earliest success is after {cycles} clock edges")
+    builder.check_sat(s)
     print()
+
+
+def find_earliest_success(
+    new_solver: Callable, successes: list
+) -> tuple[int, z3.Solver | None]:
+    lo, hi = 1, len(successes) - 1
+    found: z3.Solver | None = None
+    while lo < hi:
+        mid = (lo + hi) // 2
+        s = new_solver()
+        s.add(z3.Or(successes[1 : mid + 1]))
+        sat = s.check() == z3.sat
+        print(f"  success within {mid} cycles: {'sat' if sat else 'unsat'}")
+        if sat:
+            hi, found = mid, s
+        else:
+            lo = mid + 1
+    return lo, found
+
+
+if __name__ == "__main__":
+    typer.run(main)
