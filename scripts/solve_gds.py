@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from typing import Annotated
+
 import klayout.db as kdb
 import typer
 import z3
@@ -145,7 +148,17 @@ def build_netlist(layout, cell):
     return l2n
 
 
-def main(steps: int = 10, *, hold_rst_deasserted: bool = True):
+def main(
+    steps: int = 10,
+    *,
+    hold_rst_deasserted: bool = True,
+    earliest: Annotated[
+        bool,
+        typer.Option(
+            help="Scan to find smallest number of clock cycles at which 'success' can be high, with binary search."
+        ),
+    ] = False,
+):
     layout = kdb.Layout()
     layout.read("puzzle.gds")
     top = layout.top_cell()
@@ -178,30 +191,54 @@ def main(steps: int = 10, *, hold_rst_deasserted: bool = True):
         f"unrolling {steps} steps"
         + (" (rst_n held high)" if hold_rst_deasserted else "")
     )
-    trace = list(
-        tqdm(builder.iter_output_trace(steps), desc="Building trace steps", total=steps)
-    )
-
-    s = z3.Solver()
-    # success at any cycle
-    s.add(z3.Or([state["success"] for state in trace]))
-    if hold_rst_deasserted:
-        # initial state is already the reset state; keep rst_n deasserted
-        for t in range(steps):
-            s.add(z3.Bool(f"rst_n@{t}"))
-
-    print("Will check sat...")
-    builder.check_sat(s, trace[-1])
-    if s.check() == z3.sat:
-        print("Found sat solution!")
-        m = s.model()
-        first = next(
-            t
-            for t, st in enumerate(trace)
-            if z3.is_true(m.eval(st["success"], model_completion=True))
+    successes = [
+        state["success"]
+        for state in tqdm(
+            builder.iter_output_trace(steps), desc="Building trace steps", total=steps
         )
-        print(f"success first high at cycle {first}")
+    ]
+
+    def new_solver() -> z3.Solver:
+        s = z3.Solver()
+        if hold_rst_deasserted:
+            # initial state is already the reset state; keep rst_n deasserted
+            for t in range(steps):
+                s.add(z3.Bool(f"rst_n@{t}"))
+        return s
+
+    if earliest:
+        print(f"Searching up to {steps} cycles...")
+        cycles, s = find_earliest_success(new_solver, successes)
+    else:
+        print(f"checking success within {steps} clock edges...")
+        s = new_solver()
+        s.add(z3.Or(successes[1:]))
+
+    if s is None or s.check() != z3.sat:
+        print("UNSAT: success not reachable within the bound")
+        return
+    if earliest:
+        print(f"earliest success is after {cycles} clock edges")
+    builder.check_sat(s)
     print()
+
+
+def find_earliest_success(
+    new_solver: Callable, successes: list
+) -> tuple[int, z3.Solver | None]:
+    lo, hi = 1, len(successes) - 1
+    found: z3.Solver | None = None
+    while lo < hi:
+        mid = (lo + hi) // 2
+        s = new_solver()
+        s.add(z3.Or(successes[1 : mid + 1]))
+        sat = s.check() == z3.sat
+        print(f"  success within {mid} cycles: {'sat' if sat else 'unsat'}")
+        if sat:
+            hi, found = mid, s
+        else:
+            lo = mid + 1
+    return lo, found
 
 
 if __name__ == "__main__":

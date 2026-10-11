@@ -515,7 +515,7 @@ class ExpressionBuilder:
             pass
         return state
 
-    def check_sat(self, s: z3.Solver, state: dict):
+    def check_sat(self, s: z3.Solver):
         print("Check satisfiability... ", end="")
         if s.check() == z3.sat:
             print("passed!")
