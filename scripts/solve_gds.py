@@ -149,7 +149,7 @@ def build_netlist(layout, cell):
 
 
 def main(
-    steps: int = 10,
+    steps: int = 150,
     *,
     hold_rst_deasserted: bool = True,
     earliest: Annotated[
