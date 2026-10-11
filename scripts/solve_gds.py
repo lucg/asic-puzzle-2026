@@ -173,12 +173,22 @@ def main(steps: int = 10):
     if undriven := builder.add_undriven_as_inputs():
         print(f"undriven nets treated as free inputs: {sorted(undriven)}")
 
-    state = builder.build_output_expressions(steps)
+    print(f"unrolling {steps} steps")
+    trace = list(builder.iter_output_trace(steps))
 
     s = z3.Solver()
-    s.add(state["success"] == z3.BoolVal(True))
+    # success at any cycle
+    s.add(z3.Or([state["success"] for state in trace]))
 
-    builder.check_sat(s, state)
+    builder.check_sat(s, trace[-1])
+    if s.check() == z3.sat:
+        m = s.model()
+        first = next(
+            t
+            for t, st in enumerate(trace)
+            if z3.is_true(m.eval(st["success"], model_completion=True))
+        )
+        print(f"success first high at cycle {first}")
     print()
 
 

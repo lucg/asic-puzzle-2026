@@ -502,11 +502,17 @@ class ExpressionBuilder:
             for net_name in self.regs
         }
 
-    def build_output_expressions(self, steps):
+    def iter_output_trace(self, steps) -> list[dict]:
         order = list(self.get_order())
         state = self.initial_state()
+        yield state
         for t in range(steps):
-            state = self.step(order, state, t)
+            yield (state := self.step(order, state, t))
+
+    def build_output_expressions(self, steps):
+        state = {}
+        for state in self.iter_output_trace(steps):
+            pass
         return state
 
     def check_sat(self, s: z3.Solver, state: dict):
