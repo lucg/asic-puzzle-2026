@@ -31,6 +31,10 @@ class ExpressionBuilder:
         self.outputs: set[str] = set()
         self.drivers: dict[NetName, VerilogModuleInstance] = {}
         self.regs: dict[NetName, NetName] = {}  # output net -> input net mapping
+        # output net -> value the flop takes on reset (also its initial state)
+        self.reg_reset_to_value: dict[NetName, bool] = {}
+        # output net -> active-low reset/set net, if the flop has one
+        self.reg_reset_net: dict[NetName, NetName] = {}
 
     @classmethod
     def _unpack_ports(cls, symbol):
@@ -39,9 +43,20 @@ class ExpressionBuilder:
     def _add_logic(self, symbol, out_port: PortName, operation):
         raise NotImplementedError
 
-    def _add_reg(self, symbol, in_port: PortName, out_port: PortName):
+    def _add_reg(
+        self,
+        symbol,
+        in_port: PortName,
+        out_port: PortName,
+        reset_lo_port: PortName | None = None,
+        reset_value: bool = False,
+    ):
         port_mapping = self._unpack_ports(symbol)
-        self.regs[port_mapping[out_port]] = port_mapping[in_port]
+        out_net = port_mapping[out_port]
+        self.regs[out_net] = port_mapping[in_port]
+        self.reg_reset_to_value[out_net] = reset_value
+        if reset_lo_port is not None:
+            self.reg_reset_net[out_net] = port_mapping[reset_lo_port]
 
     def _add_const(self, symbol, out_port: PortName, value: bool):
         self._add_logic(symbol, out_port, value)
@@ -417,11 +432,25 @@ class ExpressionBuilder:
             case str() as s if s.startswith("sky130_fd_sc_hd__mux2_"):
                 self._add_logic(symbol, "X", lambda A0, A1, S: z3.If(S, A1, A0))
             case str() as s if s.startswith("sky130_fd_sc_hd__dfrtp_"):
-                self._add_reg(symbol, in_port="D", out_port="Q")
+                # active-low async reset -> Q=0
+                self._add_reg(
+                    symbol,
+                    in_port="D",
+                    out_port="Q",
+                    reset_lo_port="RESET_B",
+                    reset_value=False,
+                )
             case str() as s if s.startswith("sky130_fd_sc_hd__dfxtp_"):
                 self._add_reg(symbol, in_port="D", out_port="Q")
             case str() as s if s.startswith("sky130_fd_sc_hd__dfstp_"):
-                self._add_reg(symbol, in_port="D", out_port="Q")
+                # active-low async set -> Q=1
+                self._add_reg(
+                    symbol,
+                    in_port="D",
+                    out_port="Q",
+                    reset_lo_port="SET_B",
+                    reset_value=True,
+                )
             case str() as s if s.startswith("sky130_fd_sc_hd__conb_"):
                 self._add_const(symbol, "HI", True)
                 self._add_const(symbol, "LO", False)
@@ -435,6 +464,17 @@ class ExpressionBuilder:
                 for output_name, module in self.drivers.items()
             }
         ).static_order()
+
+    def _next_reg_value(self, out_net: NetName, values: dict):
+        in_net = self.regs[out_net]
+        default_value = values[in_net]
+        if (reset_net := self.reg_reset_net.get(out_net)) is None:
+            return default_value
+        return z3.If(
+            values[reset_net],
+            default_value,
+            z3.BoolVal(self.reg_reset_to_value[out_net]),
+        )
 
     def step(self, order: Iterable[NetName], state, t):
         values = dict(state)
@@ -452,15 +492,19 @@ class ExpressionBuilder:
                 }
                 values[net_name] = module.eval(**op_kwargs)
         return {net_name: values[net_name] for net_name in self.outputs} | {
-            output_net_name: values[input_net_name]
-            for output_net_name, input_net_name in self.regs.items()
+            output_net_name: self._next_reg_value(output_net_name, values)
+            for output_net_name in self.regs
+        }
+
+    def initial_state(self) -> dict:
+        return {
+            net_name: z3.BoolVal(self.reg_reset_to_value.get(net_name, False))
+            for net_name in self.regs
         }
 
     def build_output_expressions(self, steps):
         order = list(self.get_order())
-
-        state = {net_name: z3.BoolVal(False) for net_name in self.regs}
-
+        state = self.initial_state()
         for t in range(steps):
             state = self.step(order, state, t)
         return state
