@@ -144,7 +144,7 @@ def build_netlist(layout, cell):
     return l2n
 
 
-def main(steps: int = 10):
+def main(steps: int = 10, *, hold_rst_deasserted: bool = True):
     layout = kdb.Layout()
     layout.read("puzzle.gds")
     top = layout.top_cell()
@@ -173,12 +173,19 @@ def main(steps: int = 10):
     if undriven := builder.add_undriven_as_inputs():
         print(f"undriven nets treated as free inputs: {sorted(undriven)}")
 
-    print(f"unrolling {steps} steps")
+    print(
+        f"unrolling {steps} steps"
+        + (" (rst_n held high)" if hold_rst_deasserted else "")
+    )
     trace = list(builder.iter_output_trace(steps))
 
     s = z3.Solver()
     # success at any cycle
     s.add(z3.Or([state["success"] for state in trace]))
+    if hold_rst_deasserted:
+        # initial state is already the reset state; keep rst_n deasserted
+        for t in range(steps):
+            s.add(z3.Bool(f"rst_n@{t}"))
 
     builder.check_sat(s, trace[-1])
     if s.check() == z3.sat:
