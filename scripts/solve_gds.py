@@ -176,7 +176,7 @@ def main(steps: int = 10):
     state = builder.build_output_expressions(steps)
 
     s = z3.Solver()
-    s.add(z3.And(state["success"] == z3.BoolVal(True)))
+    s.add(state["success"] == z3.BoolVal(True))
 
     builder.check_sat(s, state)
     print()
