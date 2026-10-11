@@ -2,6 +2,7 @@ import klayout.db as kdb
 import typer
 import z3
 from pydantic import BaseModel
+from tqdm import tqdm
 
 from .expr_builder import ExpressionBuilder as ExpressionBuilderBase
 from .expr_builder import NetName, PortName, VerilogModuleInstance
@@ -177,7 +178,9 @@ def main(steps: int = 10, *, hold_rst_deasserted: bool = True):
         f"unrolling {steps} steps"
         + (" (rst_n held high)" if hold_rst_deasserted else "")
     )
-    trace = list(builder.iter_output_trace(steps))
+    trace = list(
+        tqdm(builder.iter_output_trace(steps), desc="Building trace steps", total=steps)
+    )
 
     s = z3.Solver()
     # success at any cycle
@@ -187,8 +190,10 @@ def main(steps: int = 10, *, hold_rst_deasserted: bool = True):
         for t in range(steps):
             s.add(z3.Bool(f"rst_n@{t}"))
 
+    print("Will check sat...")
     builder.check_sat(s, trace[-1])
     if s.check() == z3.sat:
+        print("Found sat solution!")
         m = s.model()
         first = next(
             t
