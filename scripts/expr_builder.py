@@ -246,7 +246,7 @@ class ExpressionBuilder:
                 self._add_logic(
                     symbol,
                     "X",
-                    lambda A1, A2, B1: z3.And(z3.Or(A2, A2), B1),
+                    lambda A1, A2, B1: z3.And(z3.Or(A2, A1), B1),
                 )
             case str() as s if s.startswith("sky130_fd_sc_hd__o21ai_"):
                 self._add_logic(
@@ -360,7 +360,7 @@ class ExpressionBuilder:
                 self._add_logic(
                     symbol,
                     "Y",
-                    lambda A, B, C, D: z3.Or(z3.And(z3.And(z3.And(D, C), B), A)),
+                    lambda A, B, C, D: z3.Not(z3.And(z3.And(z3.And(D, C), B), A)),
                 )
             case str() as s if s.startswith("sky130_fd_sc_hd__or3b_"):
                 self._add_logic(
